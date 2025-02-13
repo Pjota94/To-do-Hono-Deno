@@ -1,6 +1,7 @@
 import { Hono } from "https://deno.land/x/hono@v4.3.11/mod.ts";
 import { createClient } from "@supabase/supabase-js";
 import { TodoList } from "./components/TodoList.tsx";
+import { useState } from "hono/jsx";
 
 const app = new Hono();
 
@@ -10,28 +11,25 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 app.get("/", async (c) => {
-  // Pegando dados da tabela 'todos' no Supabase
   const { data, error } = await supabase.from("todos").select("*");
 
   if (error) {
     return c.json({ error });
   }
 
-  // Criando a lista de todos em HTML com Tailwind
-  const todosList = data
-  .map(
-    (todo: { id: number; title: string }) => `
-      <li class="bg-white p-4 rounded-lg shadow-md hover:bg-gray-100 flex justify-between items-center">
-        <span class="text-xl text-gray-700">${todo.title}</span>
-        <form action="/delete" method="POST">
-          <input type="hidden" name="id" value="${todo.id}">
-          <button type="submit" class="ml-2 bg-red-500 text-white px-4 py-2 rounded-md">Deletar</button>
-        </form>
-      </li>`
-  )
-  .join("");
+  const [todos, setTodos] = useState(data);
 
-  // Retornando o HTML com a lista de todos
+  // Gerando os itens da lista com o botão de exclusão
+  const todosList = todos
+    .map(
+      (todo: { id: string, title: string }) => `
+        <li class="bg-white p-4 rounded-lg shadow-md hover:bg-gray-100 flex justify-between items-center">
+          <span class="text-xl text-gray-700">${todo.title}</span>
+          <button class="ml-4 bg-red-500 text-white px-3 py-1 rounded-md" onclick="deleteTodo('${todo.id}')">Excluir</button>
+        </li>`
+    )
+    .join("");
+
   return c.html(`
     <html>
       <head>
@@ -40,25 +38,72 @@ app.get("/", async (c) => {
       <body class="bg-gray-100 p-8">
         <h1 class="text-4xl font-bold text-center mb-6">Todo List</h1>
         
-        <form action="/add" method="post" class="mb-6">
-          <input type="text" name="title" placeholder="Novo Todo" required class="p-2 rounded-md border">
+        <form id="todo-form" class="mb-6">
+          <input type="text" id="title" name="title" placeholder="Novo Todo" required class="p-2 rounded-md border">
           <button type="submit" class="ml-2 bg-blue-500 text-white px-4 py-2 rounded-md">Adicionar</button>
         </form>
 
         <ul class="max-w-md mx-auto space-y-4">
           ${todosList}
         </ul>
+
+        <script>
+          const form = document.getElementById('todo-form');
+          form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            
+            const title = document.getElementById('title').value;
+
+            if (title) {
+              const response = await fetch('/add', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ title }),
+              });
+
+              if (response.ok) {
+                // Atualiza a lista de todos sem recarregar a página
+                const updatedTodos = await response.json();
+                const todosList = updatedTodos
+                  .map(todo => \`<li class="bg-white p-4 rounded-lg shadow-md hover:bg-gray-100 flex justify-between items-center">
+                    <span class="text-xl text-gray-700">\${todo.title}</span>
+                    <button class="ml-4 bg-red-500 text-white px-3 py-1 rounded-md" onclick="deleteTodo('\${todo.id}')">Excluir</button>
+                  </li>\`)
+                  .join('');
+                document.querySelector('ul').innerHTML = todosList;
+                document.getElementById('title').value = ''; // Limpa o campo de input
+              }
+            }
+          });
+
+          // Função de exclusão
+          async function deleteTodo(id) {
+            const response = await fetch('/delete/' + id, {
+              method: 'DELETE',
+            });
+
+            if (response.ok) {
+              const updatedTodos = await response.json();
+              const todosList = updatedTodos
+                .map(todo => \`<li class="bg-white p-4 rounded-lg shadow-md hover:bg-gray-100 flex justify-between items-center">
+                  <span class="text-xl text-gray-700">\${todo.title}</span>
+                  <button class="ml-4 bg-red-500 text-white px-3 py-1 rounded-md" onclick="deleteTodo('\${todo.id}')">Excluir</button>
+                </li>\`)
+                .join('');
+              document.querySelector('ul').innerHTML = todosList;
+            }
+          }
+        </script>
       </body>
     </html>
   `);
 });
 
-// Criar novo todo (rota POST)
 app.post("/add", async (c) => {
-  const body = await c.req.parseBody();
-  const title = body["title"];
-
-  console.log("Título recebido:", title);  // Adicionando log para depuração
+  const body = await c.req.json(); 
+  const { title } = body;
 
   if (!title) {
     return c.text("Título é obrigatório!", 400);
@@ -67,31 +112,38 @@ app.post("/add", async (c) => {
   const { error } = await supabase.from("todos").insert([{ title }]);
 
   if (error) {
-    console.error("Erro ao adicionar:", error.message);  // Log do erro
     return c.text("Erro ao adicionar!", 500);
   }
 
-  return c.redirect("/");
-});
-
-//Deletar Todo
-
-app.post("/delete", async (c) => {
-  const body = await c.req.parseBody();
-  const id = body["id"];
-
-  if (!id) {
-    return c.text("ID é obrigatório para deletar!", 400);
+  // Recuperando os dados atualizados
+  const { data, error: fetchError } = await supabase.from("todos").select("*");
+  
+  if (fetchError) {
+    return c.text("Erro ao obter dados!", 500);
   }
 
-  // Deletando o todo com o id fornecido
+  return c.json(data); // Respondendo com os dados atualizados
+});
+
+// Rota para excluir o item
+app.delete("/delete/:id", async (c) => {
+  const id = c.req.param("id");
+
+  // Deletando o item pelo id
   const { error } = await supabase.from("todos").delete().eq("id", id);
 
   if (error) {
-    console.error("Erro ao excluir:", error.message); // Log do erro
-    return c.text("Erro ao excluir!", 500);
+    return c.text("Erro ao excluir o item!", 500);
   }
 
-  return c.redirect("/"); // Redireciona para a página principal após a exclusão
+  // Retornando os dados atualizados após exclusão
+  const { data, error: fetchError } = await supabase.from("todos").select("*");
+  
+  if (fetchError) {
+    return c.text("Erro ao obter dados após exclusão!", 500);
+  }
+
+  return c.json(data); // Respondendo com os dados atualizados após exclusão
 });
+
 Deno.serve(app.fetch);
