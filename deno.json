@@ -1,0 +1,13 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "jsr:@supabase/supabase-js@^2.48.1",
+    "hono": "jsr:@hono/hono@^4.4.0"
+  },
+  "compilerOptions": {
+    "jsx": "precompile",
+    "jsxImportSource": "hono/jsx"
+  },
+  "tasks": {
+    "run": "deno run --watch --allow-net --allow-read main.tsx"
+  }
+}
